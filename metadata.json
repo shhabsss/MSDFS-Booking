@@ -1,0 +1,6 @@
+{
+  "name": "MSD Facility Services - Booking Management",
+  "description": "Google Sheet-style booking management and staff assignment system for MSD Facility Services, Pondicherry.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
