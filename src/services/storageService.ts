@@ -152,6 +152,17 @@ export function getStoredSettings(): AppSettings {
       }
     }
 
+    // Ensure WhatsApp templates are refreshed to the clean location format without redundant full address in customer message
+    if (
+      !parsed.whatsappTemplates ||
+      !parsed.whatsappTemplates.customerTemplate ||
+      parsed.whatsappTemplates.customerTemplate.includes('Full Address / Landmarks:') ||
+      parsed.whatsappTemplates.customerTemplate.includes('🏠 Full Address')
+    ) {
+      parsed.whatsappTemplates = INITIAL_SETTINGS.whatsappTemplates;
+      updated = true;
+    }
+
     if (updated) {
       parsed.services = currentServices;
       localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(parsed));
@@ -303,47 +314,89 @@ export function buildCustomerWhatsAppMessage(
 
   const customerName = booking.customerName?.trim() || 'Valued Customer';
   const service = booking.serviceType?.trim() || 'General Cleaning';
+
+  // 1. Service Location (Full Address / Landmarks hidden from customer message line)
   const location =
     booking.serviceLocation === 'Other' && booking.customLocation
-      ? booking.customLocation
-      : booking.serviceLocation || 'Puducherry';
+      ? booking.customLocation.trim()
+      : booking.serviceLocation?.trim() || 'Puducherry';
 
   // Slot display: "2026-09-15 | Morning Slot"
   const timeSlot = booking.slotPeriod
     ? `${booking.slotPeriod} Slot`
     : booking.preferredTime || `Slot ${booking.slotNumber}`;
 
-  // Staff names
-  const staffNames =
-    booking.assignedStaffNames && booking.assignedStaffNames.length > 0
-      ? booking.assignedStaffNames.join(', ')
-      : 'Team Assigned';
+  // 2. Staff section logic:
+  // If 1 staff: show first staff name and mobile.
+  // If > 1 staff: show first staff name & phone, plus team list (only names).
+  const assignedStaffNames = booking.assignedStaffNames || [];
+  const assignedStaffIds = booking.assignedStaffIds || [];
 
-  // Find primary staff phone from staff master
+  const firstStaffName = assignedStaffNames[0] || '';
+  const firstStaffId = assignedStaffIds[0];
+
   let primaryStaffPhone = '';
-  if (booking.assignedStaffIds && booking.assignedStaffIds.length > 0) {
-    for (const sId of booking.assignedStaffIds) {
-      const found = allStaff.find((s) => s.id === sId);
-      if (found?.mobile && found.mobile.trim()) {
-        primaryStaffPhone = found.mobile.trim();
-        break;
-      }
+  if (firstStaffId) {
+    const found = allStaff.find((s) => s.id === firstStaffId);
+    if (found?.mobile && found.mobile.trim()) {
+      primaryStaffPhone = found.mobile.trim();
     }
   }
-  if (!primaryStaffPhone && allStaff.length > 0) {
-    for (const name of booking.assignedStaffNames || []) {
-      const found = allStaff.find((s) => s.name.toLowerCase() === name.toLowerCase());
-      if (found?.mobile && found.mobile.trim()) {
-        primaryStaffPhone = found.mobile.trim();
-        break;
-      }
+  if (!primaryStaffPhone && firstStaffName) {
+    const found = allStaff.find((s) => s.name.toLowerCase() === firstStaffName.toLowerCase());
+    if (found?.mobile && found.mobile.trim()) {
+      primaryStaffPhone = found.mobile.trim();
     }
   }
   const staffPhoneDisplay = primaryStaffPhone || `${company.mobile} (Office)`;
 
-  // Amount formatting: CRITICAL - If After Visit, show "After Visit", NOT "₹After Visit"
-  const { isAfterVisit, display: amtVal } = formatBookingAmount(booking.amount);
-  const amountLine = isAfterVisit ? 'Total Amount: After Visit' : `Total Amount: ${amtVal}`;
+  let staffLines: string[] = [];
+  if (assignedStaffNames.length === 0) {
+    staffLines = [
+      `👷 Assigned Staff: Team Assigned`,
+      `📞 Staff Phone: ${company.mobile} (Office)`,
+    ];
+  } else if (assignedStaffNames.length === 1) {
+    staffLines = [
+      `👷 Assigned Staff: ${firstStaffName}`,
+      `📞 Staff Phone: ${staffPhoneDisplay}`,
+    ];
+  } else {
+    // More than 1 staff selected: First staff name & phone, and only staff names for the team
+    const teamMembersList = assignedStaffNames.join(', ');
+    staffLines = [
+      `👷 Assigned Staff: ${firstStaffName}`,
+      `📞 Staff Phone: ${staffPhoneDisplay}`,
+      `👥 Team: ${teamMembersList}`,
+    ];
+  }
+
+  // 3. Payment & Billing Calculation:
+  // When amount is not fixed ("After Visit"), show simply "Amount: After Visit"
+  const { isAfterVisit } = formatBookingAmount(booking.amount);
+  let paymentLines: string[] = [];
+
+  if (isAfterVisit) {
+    paymentLines = [
+      `💰 Amount: After Visit`,
+    ];
+  } else {
+    const totalNum = typeof booking.amount === 'number' ? booking.amount : parseFloat(String(booking.amount)) || 0;
+    const advNum = Number(booking.advanceAmount) || 0;
+    const balNum = booking.balanceAmount !== undefined && booking.balanceAmount !== null
+      ? Number(booking.balanceAmount)
+      : Math.max(0, totalNum - advNum);
+
+    const balanceText = balNum === 0 && advNum >= totalNum && totalNum > 0
+      ? '₹0 (Fully Paid)'
+      : `₹${balNum.toLocaleString('en-IN')}`;
+
+    paymentLines = [
+      `💰 Total Amount (₹): ₹${totalNum.toLocaleString('en-IN')}`,
+      `💵 Advance Paid (₹): ₹${advNum.toLocaleString('en-IN')}`,
+      `💳 Balance Due (₹): ${balanceText}`,
+    ];
+  }
 
   return [
     `Hello ${customerName},`,
@@ -354,10 +407,9 @@ export function buildCustomerWhatsAppMessage(
     `🧹 Service: ${service}`,
     ...(booking.serviceDescription ? [`📝 Work Details: ${booking.serviceDescription}`] : []),
     `📅 Date & Time: ${booking.scheduleDate} | ${timeSlot}`,
-    `📍 Location: ${location}`,
-    `👷 Assigned Staff: ${staffNames}`,
-    `📞 Staff Phone: ${staffPhoneDisplay}`,
-    `💰 ${amountLine}`,
+    `📍 Service Location: ${location}`,
+    ...staffLines,
+    ...paymentLines,
     '',
     `Thank you for choosing MSD Facility Services!`,
     '',
@@ -386,22 +438,44 @@ export function buildStaffWhatsAppMessage(
   const customerMobile = booking.customerMobile?.trim() || 'N/A';
   const service = booking.serviceType?.trim() || 'Cleaning Service';
 
-  const locationDisplay =
+  const location =
     booking.serviceLocation === 'Other' && booking.customLocation
-      ? booking.customLocation
-      : booking.serviceLocation || 'Puducherry';
-
-  // Address: Must use the customer's actual full address if available
-  const address = booking.fullAddress?.trim() || locationDisplay;
+      ? booking.customLocation.trim()
+      : booking.serviceLocation?.trim() || 'Puducherry';
+  const fullAddress = booking.fullAddress?.trim();
 
   // Slot display: "2026-09-13 | Evening Slot"
   const timeSlot = booking.slotPeriod
     ? `${booking.slotPeriod} Slot`
     : booking.preferredTime || `Slot ${booking.slotNumber}`;
 
-  // Amount to Collect: CRITICAL - If After Visit, show "After Visit", NOT "₹After Visit"
-  const { isAfterVisit, display: amtVal } = formatBookingAmount(booking.amount);
-  const amountToCollect = isAfterVisit ? 'Amount to Collect: After Visit' : `Amount to Collect: ${amtVal}`;
+  // Payment & Billing for staff
+  const { isAfterVisit } = formatBookingAmount(booking.amount);
+  let paymentLines: string[] = [];
+
+  if (isAfterVisit) {
+    paymentLines = [
+      `💰 Amount: After Visit`,
+    ];
+  } else {
+    const totalNum = typeof booking.amount === 'number' ? booking.amount : parseFloat(String(booking.amount)) || 0;
+    const advNum = Number(booking.advanceAmount) || 0;
+    const balNum = booking.balanceAmount !== undefined && booking.balanceAmount !== null
+      ? Number(booking.balanceAmount)
+      : Math.max(0, totalNum - advNum);
+
+    paymentLines = [
+      `💰 Total Amount (₹): ₹${totalNum.toLocaleString('en-IN')}`,
+      `💵 Advance Paid (₹): ₹${advNum.toLocaleString('en-IN')}`,
+      `💳 Balance to Collect (₹): ${balNum === 0 ? '₹0 (Already Paid)' : `₹${balNum.toLocaleString('en-IN')}`}`,
+    ];
+  }
+
+  // If multiple staff members are assigned, show team names
+  const assignedStaffNames = booking.assignedStaffNames || [];
+  const teamSection = assignedStaffNames.length > 1
+    ? [`👥 Team: ${assignedStaffNames.join(', ')}`]
+    : [];
 
   return [
     `New Job Assignment (MSD Facility Services):`,
@@ -409,11 +483,13 @@ export function buildStaffWhatsAppMessage(
     `📋 Ref No: ${booking.bookingRef}`,
     `👤 Customer: ${customerName}`,
     `📞 Phone: ${customerMobile}`,
-    `📍 Address: ${address}`,
+    `📍 Service Location: ${location}`,
+    ...(fullAddress ? [`🏠 Full Address: ${fullAddress}`] : []),
     `🧹 Service: ${service}`,
     ...(booking.serviceDescription ? [`📝 Work Details: ${booking.serviceDescription}`] : []),
     `📅 Date & Time: ${booking.scheduleDate} | ${timeSlot}`,
-    `💰 ${amountToCollect}`,
+    ...teamSection,
+    ...paymentLines,
     '',
     `Please reach on time!`,
     '',
@@ -428,70 +504,161 @@ export function buildStaffWhatsAppMessage(
 
 export function formatCustomerWhatsAppMessage(
   booking: Booking,
-  template: string,
-  allStaff?: StaffMember[]
+  template?: string,
+  allStaff?: StaffMember[],
+  companyInfo?: { name: string; mobile: string; email: string; website: string }
 ): string {
-  if (allStaff && allStaff.length > 0) {
-    return buildCustomerWhatsAppMessage(booking, allStaff);
+  if (!template || (allStaff && allStaff.length > 0)) {
+    return buildCustomerWhatsAppMessage(booking, allStaff || [], companyInfo);
   }
 
-  const staffDisplay = booking.assignedStaffNames?.length
-    ? booking.assignedStaffNames.join(', ')
-    : 'Team Assigned';
+  const assignedStaffNames = booking.assignedStaffNames || [];
+  const firstStaffName = assignedStaffNames[0] || 'Team Assigned';
+  const teamNames = assignedStaffNames.join(', ') || firstStaffName;
 
-  const { isAfterVisit, display: amtVal } = formatBookingAmount(booking.amount);
-  const amountDisplay = isAfterVisit ? 'After Visit' : amtVal;
+  const { isAfterVisit } = formatBookingAmount(booking.amount);
+  const totalNum = typeof booking.amount === 'number' ? booking.amount : parseFloat(String(booking.amount)) || 0;
+  const advNum = Number(booking.advanceAmount) || 0;
+  const balNum = booking.balanceAmount !== undefined && booking.balanceAmount !== null
+    ? Number(booking.balanceAmount)
+    : Math.max(0, totalNum - advNum);
+
+  const totalDisplay = isAfterVisit ? 'After Visit' : `₹${totalNum.toLocaleString('en-IN')}`;
+  const advanceDisplay = advNum > 0 ? `₹${advNum.toLocaleString('en-IN')}` : '₹0';
+  const balanceDisplay = isAfterVisit
+    ? 'After Visit'
+    : balNum === 0 && advNum >= totalNum && totalNum > 0
+    ? '₹0 (Fully Paid)'
+    : `₹${balNum.toLocaleString('en-IN')}`;
 
   const service = booking.serviceType || '';
   const workDetails = booking.serviceDescription || '';
+  const location =
+    booking.serviceLocation === 'Other' && booking.customLocation
+      ? booking.customLocation.trim()
+      : booking.serviceLocation?.trim() || 'Puducherry';
+  const address = booking.fullAddress?.trim() || location;
+  const timeSlot = booking.slotPeriod ? `${booking.slotPeriod} Slot` : booking.preferredTime || `Slot ${booking.slotNumber}`;
 
   return template
-    .replace(/\[Customer Name\]/g, booking.customerName || 'Customer')
-    .replace(/\[Booking Reference\]/g, booking.bookingRef)
-    .replace(/\[Booking Date\]/g, booking.bookingDate || '')
-    .replace(/\[Schedule Date\]/g, booking.scheduleDate || '')
-    .replace(/\[Service\]/g, service)
-    .replace(/\[Service Name\]/g, service)
-    .replace(/\[Work Details\]/g, workDetails)
-    .replace(/\[Work Description\]/g, workDetails)
-    .replace(/\[Staff Names\]/g, staffDisplay)
-    .replace(/\[Time\]/g, booking.preferredTime || `Slot ${booking.slotNumber}`)
-    .replace(/₹?\[Amount\]/g, amountDisplay);
+    .replace(/,\s*Full Address \/ Landmarks:\s*\[Full Address\]/gi, '')
+    .replace(/,\s*Full Address:\s*\[Full Address\]/gi, '')
+    .replace(/\[Customer Name\]/gi, booking.customerName || 'Customer')
+    .replace(/\{CUSTOMER_NAME\}/g, booking.customerName || 'Customer')
+    .replace(/\[Booking Reference\]/gi, booking.bookingRef)
+    .replace(/\{REF\}/g, booking.bookingRef)
+    .replace(/\[Booking Date\]/gi, booking.bookingDate || '')
+    .replace(/\[Schedule Date\]/gi, booking.scheduleDate || '')
+    .replace(/\{DATE\}/g, booking.scheduleDate || '')
+    .replace(/\[Time Slot\]/gi, timeSlot)
+    .replace(/\[Time\]/gi, timeSlot)
+    .replace(/\{TIME\}/g, timeSlot)
+    .replace(/\[Service Name\]/gi, service)
+    .replace(/\[Service\]/gi, service)
+    .replace(/\{SERVICE\}/g, service)
+    .replace(/\[Work Description\]/gi, workDetails)
+    .replace(/\[Work Details\]/gi, workDetails)
+    .replace(/\{WORK_DETAILS\}/g, workDetails)
+    .replace(/\[Service Location\]/gi, location)
+    .replace(/\[Location\]/gi, location)
+    .replace(/\{LOCATION\}/g, location)
+    .replace(/\[Full Address \/ Landmarks\]/gi, address)
+    .replace(/\[Full Address\]/gi, address)
+    .replace(/\[Address\]/gi, address)
+    .replace(/\{ADDRESS\}/g, address)
+    .replace(/\[Staff Name\]/gi, firstStaffName)
+    .replace(/\[Staff Names\]/gi, teamNames)
+    .replace(/\[Staff Phone\]/gi, companyInfo?.mobile || '9042233122')
+    .replace(/\[Primary Staff Mobile Number\]/gi, companyInfo?.mobile || '9042233122')
+    .replace(/\{STAFF_NAME\}/g, firstStaffName)
+    .replace(/\{STAFF_PHONE\}/g, companyInfo?.mobile || '9042233122')
+    .replace(/\[Team Members\]/gi, teamNames)
+    .replace(/\[Team\]/gi, teamNames)
+    .replace(/\{TEAM\}/g, teamNames)
+    .replace(/\[Total Amount\]/gi, totalDisplay)
+    .replace(/\{TOTAL_AMOUNT\}/g, totalDisplay)
+    .replace(/\[Advance Paid\]/gi, advanceDisplay)
+    .replace(/\{ADVANCE_PAID\}/g, advanceDisplay)
+    .replace(/\[Balance Due\]/gi, balanceDisplay)
+    .replace(/\{BALANCE_DUE\}/g, balanceDisplay)
+    .replace(/₹?\[Amount\]/gi, totalDisplay)
+    .replace(/\{AMOUNT\}/g, totalDisplay);
 }
 
 export function formatStaffWhatsAppMessage(
   booking: Booking,
   staffMember: StaffMember,
-  template?: string
+  template?: string,
+  companyInfo?: { name: string; mobile: string; email: string; website: string }
 ): string {
   if (!template) {
-    return buildStaffWhatsAppMessage(booking, staffMember);
+    return buildStaffWhatsAppMessage(booking, staffMember, companyInfo);
   }
 
-  const locationDisplay =
+  const location =
     booking.serviceLocation === 'Other' && booking.customLocation
-      ? booking.customLocation
-      : booking.serviceLocation;
+      ? booking.customLocation.trim()
+      : booking.serviceLocation?.trim() || 'Puducherry';
+  const address = booking.fullAddress?.trim() || location;
 
-  const { isAfterVisit, display: amtVal } = formatBookingAmount(booking.amount);
-  const amountDisplay = isAfterVisit ? 'After Visit' : amtVal;
+  const { isAfterVisit } = formatBookingAmount(booking.amount);
+  const totalNum = typeof booking.amount === 'number' ? booking.amount : parseFloat(String(booking.amount)) || 0;
+  const advNum = Number(booking.advanceAmount) || 0;
+  const balNum = booking.balanceAmount !== undefined && booking.balanceAmount !== null
+    ? Number(booking.balanceAmount)
+    : Math.max(0, totalNum - advNum);
+
+  const totalDisplay = isAfterVisit ? 'After Visit' : `₹${totalNum.toLocaleString('en-IN')}`;
+  const advanceDisplay = advNum > 0 ? `₹${advNum.toLocaleString('en-IN')}` : '₹0';
+  const balanceDisplay = isAfterVisit
+    ? 'After Visit'
+    : balNum === 0 && advNum >= totalNum && totalNum > 0
+    ? '₹0 (Fully Paid)'
+    : `₹${balNum.toLocaleString('en-IN')}`;
+
   const service = booking.serviceType || '';
   const workDetails = booking.serviceDescription || '';
+  const timeSlot = booking.slotPeriod ? `${booking.slotPeriod} Slot` : booking.preferredTime || `Slot ${booking.slotNumber}`;
+  const teamNames = booking.assignedStaffNames?.join(', ') || staffMember.name;
 
   return template
-    .replace(/\[Staff Name\]/g, staffMember.name.replace(/^Mr\.\s*/, ''))
-    .replace(/\[Booking Reference\]/g, booking.bookingRef)
-    .replace(/\[Customer Name\]/g, booking.customerName || '')
-    .replace(/\[Customer Mobile\]/g, booking.customerMobile || '')
-    .replace(/\[Service\]/g, service)
-    .replace(/\[Service Name\]/g, service)
-    .replace(/\[Work Details\]/g, workDetails)
-    .replace(/\[Work Description\]/g, workDetails)
-    .replace(/\[Schedule Date\]/g, booking.scheduleDate || '')
-    .replace(/\[Time\]/g, booking.preferredTime || `Slot ${booking.slotNumber}`)
-    .replace(/\[Location\]/g, locationDisplay)
-    .replace(/\[Address\]/g, booking.fullAddress || locationDisplay)
-    .replace(/₹?\[Amount\]/g, amountDisplay);
+    .replace(/\[Staff Name\]/gi, staffMember.name.replace(/^Mr\.\s*/, ''))
+    .replace(/\{STAFF_NAME\}/g, staffMember.name.replace(/^Mr\.\s*/, ''))
+    .replace(/\[Booking Reference\]/gi, booking.bookingRef)
+    .replace(/\{REF\}/g, booking.bookingRef)
+    .replace(/\[Customer Name\]/gi, booking.customerName || '')
+    .replace(/\{CUSTOMER_NAME\}/g, booking.customerName || '')
+    .replace(/\[Customer Mobile\]/gi, booking.customerMobile || '')
+    .replace(/\{CUSTOMER_MOBILE\}/g, booking.customerMobile || '')
+    .replace(/\[Service\]/gi, service)
+    .replace(/\[Service Name\]/gi, service)
+    .replace(/\{SERVICE\}/g, service)
+    .replace(/\[Work Details\]/gi, workDetails)
+    .replace(/\[Work Description\]/gi, workDetails)
+    .replace(/\{WORK_DETAILS\}/g, workDetails)
+    .replace(/\[Schedule Date\]/gi, booking.scheduleDate || '')
+    .replace(/\{DATE\}/g, booking.scheduleDate || '')
+    .replace(/\[Time Slot\]/gi, timeSlot)
+    .replace(/\[Time\]/gi, timeSlot)
+    .replace(/\{TIME\}/g, timeSlot)
+    .replace(/\[Service Location\]/gi, location)
+    .replace(/\[Location\]/gi, location)
+    .replace(/\{LOCATION\}/g, location)
+    .replace(/\[Full Address \/ Landmarks\]/gi, address)
+    .replace(/\[Full Address\]/gi, address)
+    .replace(/\[Address\]/gi, address)
+    .replace(/\{ADDRESS\}/g, address)
+    .replace(/\[Team Members\]/gi, teamNames)
+    .replace(/\[Team\]/gi, teamNames)
+    .replace(/\{TEAM\}/g, teamNames)
+    .replace(/\[Total Amount\]/gi, totalDisplay)
+    .replace(/\{TOTAL_AMOUNT\}/g, totalDisplay)
+    .replace(/\[Advance Paid\]/gi, advanceDisplay)
+    .replace(/\{ADVANCE_PAID\}/g, advanceDisplay)
+    .replace(/\[Balance Due\]/gi, balanceDisplay)
+    .replace(/\{BALANCE_DUE\}/g, balanceDisplay)
+    .replace(/₹?\[Amount\]/gi, totalDisplay)
+    .replace(/\{AMOUNT\}/g, totalDisplay);
 }
 
 export function createWhatsAppWebUrl(phone: string, text: string): string {

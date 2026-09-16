@@ -120,11 +120,15 @@ Your booking with MSD Facility Services has been confirmed successfully.
 
 📋 Ref No: [Booking Reference]
 🧹 Service: [Service Name]
+📝 Work Details: [Work Description]
 📅 Date & Time: [Schedule Date] | [Time Slot]
-📍 Location: [Service Location]
-👷 Assigned Staff: [Staff Name(s)]
-📞 Staff Phone: [Primary Staff Mobile Number]
-💰 Total Amount: ₹[Amount]
+📍 Service Location: [Service Location]
+👷 Assigned Staff: [Staff Name]
+📞 Staff Phone: [Staff Phone]
+👥 Team: [Team Members]
+💰 Total Amount (₹): [Total Amount]
+💵 Advance Paid (₹): [Advance Paid]
+💳 Balance Due (₹): [Balance Due]
 
 Thank you for choosing MSD Facility Services!
 
@@ -139,10 +143,15 @@ MSD Facility Services
 📋 Ref No: [Booking Reference]
 👤 Customer: [Customer Name]
 📞 Phone: [Customer Mobile]
-📍 Address: [Full Service Address]
+📍 Service Location: [Service Location]
+🏠 Full Address: [Full Address]
 🧹 Service: [Service Name]
+📝 Work Details: [Work Description]
 📅 Date & Time: [Schedule Date] | [Time Slot]
-💰 Amount to Collect: ₹[Amount]
+👥 Team: [Team Members]
+💰 Total Amount (₹): [Total Amount]
+💵 Advance Paid (₹): [Advance Paid]
+💳 Balance to Collect (₹): [Balance Due]
 
 Please reach on time!
 

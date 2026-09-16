@@ -38,6 +38,67 @@ interface AllBookingsViewProps {
   setSearchQuery: (q: string) => void;
 }
 
+function escapeRegExp(string: string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+interface HighlightTextProps {
+  text?: string | null;
+  query: string;
+  className?: string;
+  highlightClassName?: string;
+}
+
+const HighlightText: React.FC<HighlightTextProps> = ({
+  text,
+  query,
+  className = '',
+  highlightClassName = 'bg-amber-200 text-amber-950 font-bold px-0.5 rounded-xs',
+}) => {
+  if (!text) return null;
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return <span className={className}>{text}</span>;
+  }
+
+  // Split query terms by whitespace to support multi-word search
+  const terms: string[] = Array.from(
+    new Set<string>(
+      trimmed
+        .split(/\s+/)
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0)
+    )
+  );
+
+  if (terms.length === 0) {
+    return <span className={className}>{text}</span>;
+  }
+
+  // Sort terms by length descending so longer matches take precedence
+  terms.sort((a, b) => b.length - a.length);
+
+  const escapedTerms = terms.map(escapeRegExp);
+  const regex = new RegExp(`(${escapedTerms.join('|')})`, 'gi');
+  const parts = text.split(regex);
+
+  return (
+    <span className={className}>
+      {parts.map((part, index) => {
+        const isMatch = terms.some((term) => part.toLowerCase() === term.toLowerCase());
+        if (isMatch) {
+          return (
+            <mark key={index} className={highlightClassName}>
+              {part}
+            </mark>
+          );
+        }
+        return <React.Fragment key={index}>{part}</React.Fragment>;
+      })}
+    </span>
+  );
+};
+
 const getStatusBadgeClass = (status: BookingStatus) => {
   switch (status) {
     case 'New':
@@ -99,6 +160,7 @@ export const AllBookingsView: React.FC<AllBookingsViewProps> = ({
   setSearchQuery,
 }) => {
   // Multi-filters (Section 20)
+  const [searchScope, setSearchScope] = useState<'customer_mobile' | 'all'>('customer_mobile');
   const [filterStaff, setFilterStaff] = useState<string>('all');
   const [filterSlot, setFilterSlot] = useState<string>('all');
   const [filterService, setFilterService] = useState<string>('all');
@@ -123,21 +185,50 @@ export const AllBookingsView: React.FC<AllBookingsViewProps> = ({
   // Filter and Search logic (Sections 19 & 20)
   const filteredBookings = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
+    const cleanDigitsQuery = searchQuery.replace(/\D/g, '');
 
     return bookings.filter((b) => {
-      // Global Search
+      // Real-time Search Filter
       if (q) {
-        const staffString = (b.assignedStaffNames || []).join(' ').toLowerCase();
-        const matchRef = b.bookingRef?.toLowerCase().includes(q);
-        const matchCustomer = b.customerName?.toLowerCase().includes(q);
-        const matchMobile = b.customerMobile?.toLowerCase().includes(q);
-        const matchService = b.serviceType?.toLowerCase().includes(q);
-        const matchLocation = b.serviceLocation?.toLowerCase().includes(q) || b.customLocation?.toLowerCase().includes(q);
-        const matchDate = b.scheduleDate?.includes(q) || b.bookingDate?.includes(q);
-        const matchStaff = staffString.includes(q);
+        if (searchScope === 'customer_mobile') {
+          const matchCustomer = b.customerName?.toLowerCase().includes(q);
+          const cleanMobile = (b.customerMobile || '').replace(/\D/g, '');
+          const matchMobile =
+            b.customerMobile?.toLowerCase().includes(q) ||
+            (cleanDigitsQuery.length >= 2 && cleanMobile.includes(cleanDigitsQuery));
 
-        if (!(matchRef || matchCustomer || matchMobile || matchService || matchLocation || matchDate || matchStaff)) {
-          return false;
+          if (!matchCustomer && !matchMobile) {
+            return false;
+          }
+        } else {
+          // Global Search (All Fields)
+          const staffString = (b.assignedStaffNames || []).join(' ').toLowerCase();
+          const matchRef = b.bookingRef?.toLowerCase().includes(q);
+          const matchCustomer = b.customerName?.toLowerCase().includes(q);
+          const cleanMobile = (b.customerMobile || '').replace(/\D/g, '');
+          const matchMobile =
+            b.customerMobile?.toLowerCase().includes(q) ||
+            (cleanDigitsQuery.length >= 2 && cleanMobile.includes(cleanDigitsQuery));
+          const matchService = b.serviceType?.toLowerCase().includes(q);
+          const matchLocation =
+            b.serviceLocation?.toLowerCase().includes(q) ||
+            b.customLocation?.toLowerCase().includes(q);
+          const matchDate = b.scheduleDate?.includes(q) || b.bookingDate?.includes(q);
+          const matchStaff = staffString.includes(q);
+
+          if (
+            !(
+              matchRef ||
+              matchCustomer ||
+              matchMobile ||
+              matchService ||
+              matchLocation ||
+              matchDate ||
+              matchStaff
+            )
+          ) {
+            return false;
+          }
         }
       }
 
@@ -216,6 +307,7 @@ export const AllBookingsView: React.FC<AllBookingsViewProps> = ({
     filterLocation,
     sortField,
     sortOrder,
+    searchScope,
   ]);
 
   const toggleSort = (field: 'scheduleDate' | 'bookingRef' | 'customerName' | 'amount') => {
@@ -255,24 +347,63 @@ export const AllBookingsView: React.FC<AllBookingsViewProps> = ({
       {/* Search & Action Bar */}
       <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          {/* Search box */}
-          <div className="flex-1 min-w-[260px] max-w-md relative">
-            <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by ref, customer, mobile, staff, location..."
-              className="w-full bg-slate-50 border border-slate-300 rounded-lg pl-9 pr-8 py-2 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white transition-colors"
-            />
-            {searchQuery && (
+          {/* Real-time Search Box & Scope Switcher */}
+          <div className="flex-1 min-w-[280px] max-w-xl flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={
+                  searchScope === 'customer_mobile'
+                    ? 'Search customer name or mobile (e.g. Shahid, 90422)...'
+                    : 'Search ref, customer, mobile, staff, location...'
+                }
+                className="w-full bg-slate-50 border border-slate-300 rounded-lg pl-9 pr-14 py-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all placeholder:text-slate-400"
+              />
+              <div className="absolute right-2 top-1.5 flex items-center gap-1">
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="p-1 text-slate-400 hover:text-slate-700 text-xs font-bold rounded hover:bg-slate-200/60 cursor-pointer"
+                    title="Clear search"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Real-time filter scope toggle */}
+            <div className="inline-flex items-center rounded-lg bg-slate-100 p-0.5 border border-slate-200 shrink-0 text-xs">
               <button
-                onClick={() => setSearchQuery('')}
-                className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-700 text-xs font-bold"
+                type="button"
+                onClick={() => setSearchScope('customer_mobile')}
+                className={`px-2.5 py-1 rounded-md font-semibold transition-all cursor-pointer flex items-center gap-1 ${
+                  searchScope === 'customer_mobile'
+                    ? 'bg-white text-blue-700 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Search specifically by customer name or mobile number with real-time highlighting"
               >
-                ✕
+                <Users className="w-3 h-3" />
+                <span>Customer &amp; Mobile</span>
               </button>
-            )}
+              <button
+                type="button"
+                onClick={() => setSearchScope('all')}
+                className={`px-2.5 py-1 rounded-md font-semibold transition-all cursor-pointer ${
+                  searchScope === 'all'
+                    ? 'bg-white text-blue-700 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Search across all fields"
+              >
+                All Fields
+              </button>
+            </div>
           </div>
 
           {/* Quick Actions */}
@@ -408,6 +539,25 @@ export const AllBookingsView: React.FC<AllBookingsViewProps> = ({
             ))}
           </select>
 
+          {/* Active Search & Matching Indicator */}
+          {searchQuery && (
+            <div className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-amber-50 text-amber-900 border border-amber-300 rounded-md text-xs font-medium">
+              <span>Matching:</span>
+              <span className="font-bold">&ldquo;{searchQuery}&rdquo;</span>
+              <span className="text-amber-700 font-semibold">
+                ({filteredBookings.length} {filteredBookings.length === 1 ? 'result' : 'results'})
+              </span>
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="hover:text-amber-950 font-bold ml-0.5 cursor-pointer"
+                title="Clear search"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           {/* Clear Filters */}
           {(searchQuery ||
             dateFilter ||
@@ -509,12 +659,12 @@ export const AllBookingsView: React.FC<AllBookingsViewProps> = ({
                           onClick={() => onViewBooking(b)}
                           className="hover:underline text-left cursor-pointer"
                         >
-                          {b.bookingRef}
+                          <HighlightText text={b.bookingRef} query={searchQuery} />
                         </button>
                       </td>
 
                       <td className="py-2.5 px-3 border-r border-slate-200 whitespace-nowrap font-medium text-slate-800">
-                        {b.scheduleDate}
+                        <HighlightText text={b.scheduleDate} query={searchQuery} />
                       </td>
 
                       <td className="py-2.5 px-3 border-r border-slate-200 whitespace-nowrap">
@@ -525,24 +675,36 @@ export const AllBookingsView: React.FC<AllBookingsViewProps> = ({
                       </td>
 
                       <td className="py-2.5 px-3 border-r border-slate-200">
-                        <div className="font-bold text-slate-900">{b.customerName}</div>
+                        <div className="font-bold text-slate-900">
+                          <HighlightText
+                            text={b.customerName}
+                            query={searchQuery}
+                            highlightClassName="bg-amber-200 text-amber-950 font-bold px-0.5 rounded-xs shadow-2xs"
+                          />
+                        </div>
                         <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
                           <Phone className="w-3 h-3 text-slate-400" />
                           <a href={`tel:${b.customerMobile}`} className="hover:text-blue-600">
-                            {b.customerMobile}
+                            <HighlightText
+                              text={b.customerMobile}
+                              query={searchQuery}
+                              highlightClassName="bg-amber-200 text-amber-950 font-bold px-0.5 rounded-xs shadow-2xs"
+                            />
                           </a>
                         </div>
                       </td>
 
                       <td className="py-2.5 px-3 border-r border-slate-200 font-medium text-slate-800">
-                        <div className="font-semibold text-slate-900">{b.serviceType}</div>
+                        <div className="font-semibold text-slate-900">
+                          <HighlightText text={b.serviceType} query={searchQuery} />
+                        </div>
                         {b.serviceDescription && (
                           <div
                             className="text-[11px] text-amber-900 bg-amber-50/90 rounded px-1.5 py-0.5 mt-1 border border-amber-200/80 font-medium max-w-[200px] truncate"
                             title={b.serviceDescription}
                           >
                             <span className="font-semibold text-amber-800">Work: </span>
-                            {b.serviceDescription}
+                            <HighlightText text={b.serviceDescription} query={searchQuery} />
                           </div>
                         )}
                       </td>
@@ -550,7 +712,9 @@ export const AllBookingsView: React.FC<AllBookingsViewProps> = ({
                       <td className="py-2.5 px-3 border-r border-slate-200">
                         <div className="font-medium text-slate-800 flex items-center gap-1">
                           <MapPin className="w-3 h-3 text-red-500 shrink-0" />
-                          <span>{locationDisplay}</span>
+                          <span>
+                            <HighlightText text={locationDisplay} query={searchQuery} />
+                          </span>
                         </div>
                       </td>
 
@@ -562,7 +726,10 @@ export const AllBookingsView: React.FC<AllBookingsViewProps> = ({
                                 key={i}
                                 className="bg-blue-50 text-blue-800 border border-blue-200 px-1.5 py-0.2 rounded text-[11px] font-medium"
                               >
-                                {n.replace(/^Mr\.\s*/, '')}
+                                <HighlightText
+                                  text={n.replace(/^Mr\.\s*/, '')}
+                                  query={searchQuery}
+                                />
                               </span>
                             ))}
                           </div>
@@ -664,8 +831,44 @@ export const AllBookingsView: React.FC<AllBookingsViewProps> = ({
                 })
               ) : (
                 <tr>
-                  <td colSpan={11} className="py-12 text-center text-slate-400">
-                    No bookings found matching your search or filters.
+                  <td colSpan={11} className="py-12 text-center text-slate-500">
+                    <div className="max-w-md mx-auto space-y-2.5">
+                      <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center mx-auto text-slate-400">
+                        <Search className="w-5 h-5" />
+                      </div>
+                      <div className="font-semibold text-slate-800 text-sm">
+                        {searchQuery ? (
+                          <>No bookings match &ldquo;{searchQuery}&rdquo;</>
+                        ) : (
+                          'No bookings found matching selected filters'
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        {searchQuery && searchScope === 'customer_mobile'
+                          ? 'No customer name or mobile number matches your search. Try adjusting the query or switch to "All Fields".'
+                          : 'Try changing your search keywords or resetting your active filters.'}
+                      </p>
+                      {searchQuery && (
+                        <div className="pt-2 flex items-center justify-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSearchQuery('')}
+                            className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 font-semibold text-xs border border-blue-200 transition-colors cursor-pointer"
+                          >
+                            Clear Search
+                          </button>
+                          {searchScope === 'customer_mobile' && (
+                            <button
+                              type="button"
+                              onClick={() => setSearchScope('all')}
+                              className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 font-semibold text-xs border border-slate-300 transition-colors cursor-pointer"
+                            >
+                              Search All Fields
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </td>
                 </tr>
               )}

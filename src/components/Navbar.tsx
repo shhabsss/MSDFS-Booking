@@ -1,4 +1,5 @@
 import {
+  BarChart3,
   Calendar,
   CalendarDays,
   FileSpreadsheet,
@@ -16,6 +17,8 @@ export type NavViewType =
   | 'all-bookings'
   | 'calendar'
   | 'staff-schedule'
+  | 'reports'
+  | 'analytics'
   | 'google-sheets'
   | 'settings'
   | 'staff'
@@ -70,6 +73,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     if (key === 'staff') return activeTab === 'staff-schedule' || activeTab === 'staff';
     if (key === 'calendar') return activeTab === 'calendar';
     if (key === 'all') return activeTab === 'all-bookings' || activeTab === 'all';
+    if (key === 'reports') return activeTab === 'reports' || activeTab === 'analytics';
     if (key === 'sync') return activeTab === 'google-sheets' || activeTab === 'sync';
     if (key === 'settings') return activeTab === 'settings';
     return false;
@@ -183,6 +187,19 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <FileSpreadsheet className="w-4 h-4" />
             <span>All Bookings ({effectiveCount})</span>
+          </button>
+
+          <button
+            onClick={() => handleSelectTab('reports')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium whitespace-nowrap transition-colors cursor-pointer ${
+              isTabActive('reports')
+                ? 'bg-blue-600 text-white'
+                : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+            }`}
+            id="tab-reports"
+          >
+            <BarChart3 className="w-4 h-4 text-emerald-400" />
+            <span>Reports &amp; Analytics</span>
           </button>
 
           <button

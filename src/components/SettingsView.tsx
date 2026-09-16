@@ -666,7 +666,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div>
               <div className="font-bold text-slate-900 text-sm">Custom WhatsApp Message Templates</div>
               <p className="text-slate-500">
-                Variables supported: {'{CUSTOMER_NAME}'}, {'{REF}'}, {'{DATE}'}, {'{TIME}'}, {'{SERVICE}'}, {'{LOCATION}'}, {'{ADDRESS}'}, {'{AMOUNT}'}, {'{STAFF_NAMES}'}, {'{STAFF_NAME}'}
+                Variables supported: [Customer Name], [Booking Reference], [Schedule Date], [Time Slot], [Service Name], [Work Description], [Service Location], [Full Address], [Staff Name], [Staff Phone], [Team Members], [Total Amount], [Advance Paid], [Balance Due]
               </p>
             </div>
             <button

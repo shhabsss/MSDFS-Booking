@@ -73,7 +73,9 @@ export const BookingDetailModal: React.FC<BookingDetailModalProps> = ({
   // WhatsApp formatted messages
   const customerMsg = formatCustomerWhatsAppMessage(
     booking,
-    settings?.whatsappTemplates?.customerTemplate
+    settings?.whatsappTemplates?.customerTemplate,
+    allStaff,
+    companyInfo
   );
 
   const handleSendCustomerWhatsApp = () => {
@@ -91,7 +93,8 @@ export const BookingDetailModal: React.FC<BookingDetailModalProps> = ({
     const staffMsg = formatStaffWhatsAppMessage(
       booking,
       staff,
-      settings?.whatsappTemplates?.staffTemplate
+      settings?.whatsappTemplates?.staffTemplate,
+      companyInfo
     );
     const url = createWhatsAppWebUrl(staff.mobile, staffMsg);
     window.open(url, '_blank');

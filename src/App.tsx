@@ -8,6 +8,7 @@ import { DailyBookingBoard } from './components/DailyBookingBoard';
 import { DashboardStats } from './components/DashboardStats';
 import { GoogleSheetSyncView } from './components/GoogleSheetSyncView';
 import { Navbar } from './components/Navbar';
+import { ReportsView } from './components/ReportsView';
 import { SettingsView } from './components/SettingsView';
 import { StaffScheduleView } from './components/StaffScheduleView';
 import { INITIAL_HISTORICAL_BOOKINGS } from './data/initialData';
@@ -45,7 +46,7 @@ export default function App() {
 
   // Navigation & View state
   const [currentTab, setCurrentTab] = useState<
-    'board' | 'all-bookings' | 'calendar' | 'staff-schedule' | 'google-sheets' | 'settings'
+    'board' | 'all-bookings' | 'calendar' | 'staff-schedule' | 'reports' | 'google-sheets' | 'settings'
   >('board');
 
   // Selected date for daily board & staff view (defaults to today)
@@ -292,9 +293,11 @@ export default function App() {
               selectedDate={selectedDate}
               setSelectedDate={setSelectedDate}
               bookingsForDate={bookingsForSelectedDate}
+              allBookings={bookings}
               allSlots={slots}
               onSlotClick={handleSlotClick}
               onNewBooking={handleOpenNewBooking}
+              onNavigateToReports={() => setCurrentTab('reports')}
             />
 
             {/* Daily Spreadsheet / Card Board */}
@@ -360,7 +363,18 @@ export default function App() {
           />
         )}
 
-        {/* View 5: Google Sheet Central Database & Sync */}
+        {/* View 5: Reports & Analytics */}
+        {currentTab === 'reports' && (
+          <ReportsView
+            bookings={bookings}
+            allStaff={staffList}
+            companyInfo={companyInfo}
+            onViewBooking={handleViewBooking}
+            onEditBooking={handleEditBooking}
+          />
+        )}
+
+        {/* View 6: Google Sheet Central Database & Sync */}
         {currentTab === 'google-sheets' && (
           <GoogleSheetSyncView
             bookings={bookings}
